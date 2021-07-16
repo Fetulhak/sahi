@@ -26,10 +26,16 @@ from sahi.utils.file import (
     save_pickle,
 )
 
+MODEL_TYPE_TO_MODEL_CLASS_NAME = {
+    "mmdet": "MmdetDetectionModel",
+    "yolov5": "Yolov5DetectionModel",
+}
+
 
 def get_prediction(
     image,
     detection_model,
+    image_size: int = None,
     shift_amount: list = [0, 0],
     full_shape=None,
     postprocess: Optional[PostprocessPredictions] = None,
@@ -37,11 +43,12 @@ def get_prediction(
 ) -> PredictionResult:
     """
     Function for performing prediction for given image using given detection_model.
-
     Arguments:
         image: str or np.ndarray
             Location of image or numpy image matrix to slice
         detection_model: model.DetectionMode
+        image_size: int
+            Inference input size.
         shift_amount: List
             To shift the box and mask predictions from sliced image to full
             sized image, should be in the form of [shift_x, shift_y]
@@ -51,7 +58,6 @@ def get_prediction(
         verbose: int
             0: no print (default)
             1: print prediction duration
-
     Returns:
         A dict with fields:
             object_prediction_list: a list of ObjectPrediction
@@ -63,7 +69,7 @@ def get_prediction(
     image_as_pil = read_image_as_pil(image)
     # get prediction
     time_start = time.time()
-    detection_model.perform_inference(np.ascontiguousarray(image_as_pil))
+    detection_model.perform_inference(np.ascontiguousarray(image_as_pil), image_size=image_size)
     time_end = time.time() - time_start
     durations_in_seconds["prediction"] = time_end
 
@@ -79,7 +85,7 @@ def get_prediction(
     filtered_object_prediction_list = [
         object_prediction
         for object_prediction in object_prediction_list
-        if object_prediction.score.value > detection_model.prediction_score_threshold
+        if object_prediction.score.value > detection_model.confidence_threshold
     ]
     # postprocess matching predictions
     if postprocess is not None:
@@ -108,10 +114,12 @@ def get_prediction(
 def get_sliced_prediction(
     image,
     detection_model=None,
+    image_size: int = None,
     slice_height: int = 256,
     slice_width: int = 256,
     overlap_height_ratio: float = 0.2,
     overlap_width_ratio: float = 0.2,
+    perform_standard_pred: bool = True,
     postprocess_type: str = "UNIONMERGE",
     postprocess_match_metric: str = "IOS",
     postprocess_match_threshold: float = 0.5,
@@ -120,11 +128,12 @@ def get_sliced_prediction(
 ) -> PredictionResult:
     """
     Function for slice image + get predicion for each slice + combine predictions in full image.
-
     Args:
         image: str or np.ndarray
             Location of image or numpy image matrix to slice
         detection_model: model.DetectionModel
+        image_size: int
+            Input image size for each inference (image is scaled by preserving asp. rat.).
         slice_height: int
             Height of each slice.  Defaults to ``256``.
         slice_width: int
@@ -137,6 +146,9 @@ def get_sliced_prediction(
             Fractional overlap in width of each window (e.g. an overlap of 0.2 for a window
             of size 256 yields an overlap of 51 pixels).
             Default to ``0.2``.
+        perform_standard_pred: bool
+            Perform a standard prediction on top of sliced predictions to increase large object
+            detection accuracy. Default: True.
         postprocess_type: str
             Type of the postprocess to be used after sliced inference while merging/eliminating predictions.
             Options are 'UNIONMERGE' or 'NMS'. Default is 'UNIONMERGE'.
@@ -152,7 +164,6 @@ def get_sliced_prediction(
             0: no print
             1: print number of slices (default)
             2: print number of slices and slice/prediction durations
-
     Returns:
         A Dict with fields:
             object_prediction_list: a list of sahi.prediction.ObjectPrediction
@@ -196,11 +207,9 @@ def get_sliced_prediction(
     # create prediction input
     num_group = int(num_slices / num_batch)
     if verbose == 1 or verbose == 2:
-        if num_slices > 0:
-            print("Number of slices:", num_slices)
-        else:
-            print("Number of slices:", 1)
+        print("Number of slices:", num_slices)
     object_prediction_list = []
+    # perform sliced prediction
     for group_ind in range(num_group):
         # prepare batch (currently supports only 1 batch)
         image_list = []
@@ -212,11 +221,23 @@ def get_sliced_prediction(
         prediction_result = get_prediction(
             image=image_list[0],
             detection_model=detection_model,
+            image_size=image_size,
             shift_amount=shift_amount_list[0],
             full_shape=[
                 slice_image_result.original_image_height,
                 slice_image_result.original_image_width,
             ],
+        )
+        object_prediction_list.extend(prediction_result.object_prediction_list)
+    if num_slices > 1 and perform_standard_pred:
+        # perform standard prediction
+        prediction_result = get_prediction(
+            image=image,
+            detection_model=detection_model,
+            image_size=image_size,
+            shift_amount=[0, 0],
+            full_shape=None,
+            postprocess=None,
         )
         object_prediction_list.extend(prediction_result.object_prediction_list)
 
@@ -252,10 +273,16 @@ def get_sliced_prediction(
 
 
 def predict(
-    model_name: str = "MmdetDetectionModel",
-    model_parameters: Dict = None,
+    model_type: str = "mmdet",
+    model_path: str = None,
+    model_config_path: str = None,
+    model_confidence_threshold: float = 0.25,
+    model_device: str = None,
+    model_category_mapping: dict = None,
+    model_category_remapping: dict = None,
     source: str = None,
-    apply_sliced_prediction: bool = True,
+    no_standard_prediction: bool = False,
+    no_sliced_prediction: bool = False,
     slice_height: int = 256,
     slice_width: int = 256,
     overlap_height_ratio: float = 0.2,
@@ -278,25 +305,27 @@ def predict(
 ):
     """
     Performs prediction for all present images in given folder.
-
     Args:
-        model_name: str
-            Name of the implemented DetectionModel in model.py file.
-        model_parameter: a dict with fields:
-            model_path: str
-                Path for the instance segmentation model weight
-            config_path: str
-                Path for the mmdetection instance segmentation model config file
-            prediction_score_threshold: float
-                All predictions with score < prediction_score_threshold will be discarded.
-            device: str
-                Torch device, "cpu" or "cuda"
-            category_remapping: dict: str to int
-                Remap category ids after performing inference
+        model_type: str
+            mmdet for 'MmdetDetectionModel', 'yolov5' for 'Yolov5DetectionModel'.
+        model_path: str
+            Path for the model weight
+        model_config_path: str
+            Path for the detection model config file
+        model_confidence_threshold: float
+            All predictions with score < model_confidence_threshold will be discarded.
+        model_device: str
+            Torch device, "cpu" or "cuda"
+        model_category_mapping: dict
+            Mapping from category id (str) to category name (str) e.g. {"1": "pedestrian"}
+        model_category_remapping: dict: str to int
+            Remap category ids after performing inference
         source: str
             Folder directory that contains images or path of the image to be predicted.
-        apply_sliced_prediction: bool
-            Set to True if you want sliced prediction, set to False for full prediction.
+        no_standard_prediction: bool
+            Dont perform standard prediction. Default: False.
+        no_sliced_prediction: bool
+            Dont perform sliced prediction. Default: False.
         slice_height: int
             Height of each slice.  Defaults to ``256``.
         slice_width: int
@@ -339,6 +368,11 @@ def predict(
             0: no print
             1: print slice/prediction durations, number of slices, model loading/file exporting durations
     """
+    # assert prediction type
+    assert (
+        no_standard_prediction and no_sliced_prediction
+    ) is not True, "'no_standard_prediction' and 'no_sliced_prediction' cannot be True at the same time."
+
     # for profiling
     durations_in_seconds = dict()
 
@@ -370,14 +404,15 @@ def predict(
 
     # init model instance
     time_start = time.time()
-    DetectionModel = import_class(model_name)
+    model_class_name = MODEL_TYPE_TO_MODEL_CLASS_NAME[model_type]
+    DetectionModel = import_class(model_class_name)
     detection_model = DetectionModel(
-        model_path=model_parameters["model_path"],
-        config_path=model_parameters.get("config_path", None),
-        prediction_score_threshold=model_parameters.get("prediction_score_threshold", 0.25),
-        device=model_parameters.get("device", None),
-        category_mapping=model_parameters.get("category_mapping", None),
-        category_remapping=model_parameters.get("category_remapping", None),
+        model_path=model_path,
+        config_path=model_config_path,
+        confidence_threshold=model_confidence_threshold,
+        device=model_device,
+        category_mapping=model_category_mapping,
+        category_remapping=model_category_remapping,
         load_at_init=False,
     )
     detection_model.load_model()
@@ -399,7 +434,7 @@ def predict(
         image_as_pil = read_image_as_pil(image_path)
 
         # perform prediction
-        if apply_sliced_prediction:
+        if not no_sliced_prediction:
             # get sliced prediction
             prediction_result = get_sliced_prediction(
                 image=image_path,
@@ -408,6 +443,7 @@ def predict(
                 slice_width=slice_width,
                 overlap_height_ratio=overlap_height_ratio,
                 overlap_width_ratio=overlap_width_ratio,
+                perform_standard_pred=not no_standard_prediction,
                 postprocess_type=postprocess_type,
                 postprocess_match_metric=postprocess_match_metric,
                 postprocess_match_threshold=postprocess_match_threshold,
@@ -417,7 +453,7 @@ def predict(
             object_prediction_list = prediction_result.object_prediction_list
             durations_in_seconds["slice"] += prediction_result.durations_in_seconds["slice"]
         else:
-            # get full sized prediction
+            # get standard prediction
             prediction_result = get_prediction(
                 image=image_path,
                 detection_model=detection_model,
@@ -437,7 +473,8 @@ def predict(
                 coco_prediction = object_prediction.to_coco_prediction()
                 coco_prediction.image_id = image_id
                 coco_prediction_json = coco_prediction.json
-                coco_json.append(coco_prediction_json)
+                if coco_prediction_json["bbox"]:
+                    coco_json.append(coco_prediction_json)
             # convert ground truth annotations to object_prediction_list
             coco_image: CocoImage = coco.images[ind]
             object_prediction_gt_list: List[ObjectPrediction] = []
@@ -535,3 +572,189 @@ def predict(
                 durations_in_seconds["export_files"],
                 "seconds.",
             )
+
+
+def predict_fiftyone(
+    model_type: str = "mmdet",
+    model_path: str = None,
+    model_config_path: str = None,
+    model_confidence_threshold: float = 0.25,
+    model_device: str = None,
+    model_category_mapping: dict = None,
+    model_category_remapping: dict = None,
+    coco_json_path: str = None,
+    coco_image_dir: str = None,
+    no_standard_prediction: bool = False,
+    no_sliced_prediction: bool = False,
+    slice_height: int = 256,
+    slice_width: int = 256,
+    overlap_height_ratio: float = 0.2,
+    overlap_width_ratio: float = 0.2,
+    postprocess_type: str = "UNIONMERGE",
+    postprocess_match_metric: str = "IOS",
+    postprocess_match_threshold: float = 0.5,
+    postprocess_class_agnostic: bool = False,
+    verbose: int = 1,
+):
+    """
+    Performs prediction for all present images in given folder.
+    Args:
+        model_type: str
+            mmdet for 'MmdetDetectionModel', 'yolov5' for 'Yolov5DetectionModel'.
+        model_path: str
+            Path for the model weight
+        model_config_path: str
+            Path for the detection model config file
+        model_confidence_threshold: float
+            All predictions with score < model_confidence_threshold will be discarded.
+        model_device: str
+            Torch device, "cpu" or "cuda"
+        model_category_mapping: dict
+            Mapping from category id (str) to category name (str) e.g. {"1": "pedestrian"}
+        model_category_remapping: dict: str to int
+            Remap category ids after performing inference
+        coco_json_path: str
+            If coco file path is provided, detection results will be exported in coco json format.
+        coco_image_dir: str
+            Folder directory that contains images or path of the image to be predicted.
+        no_standard_prediction: bool
+            Dont perform standard prediction. Default: False.
+        no_sliced_prediction: bool
+            Dont perform sliced prediction. Default: False.
+        slice_height: int
+            Height of each slice.  Defaults to ``256``.
+        slice_width: int
+            Width of each slice.  Defaults to ``256``.
+        overlap_height_ratio: float
+            Fractional overlap in height of each window (e.g. an overlap of 0.2 for a window
+            of size 256 yields an overlap of 51 pixels).
+            Default to ``0.2``.
+        overlap_width_ratio: float
+            Fractional overlap in width of each window (e.g. an overlap of 0.2 for a window
+            of size 256 yields an overlap of 51 pixels).
+            Default to ``0.2``.
+        postprocess_type: str
+            Type of the postprocess to be used after sliced inference while merging/eliminating predictions.
+            Options are 'UNIONMERGE' or 'NMS'. Default is 'UNIONMERGE'.
+        postprocess_match_metric: str
+            Metric to be used during object prediction matching after sliced prediction.
+            'IOU' for intersection over union, 'IOS' for intersection over smaller area.
+        postprocess_match_threshold: float
+            Sliced predictions having higher iou than postprocess_match_threshold will be
+            postprocessed after sliced prediction.
+        postprocess_class_agnostic: bool
+            If True, postprocess will ignore category ids.
+        verbose: int
+            0: no print
+            1: print slice/prediction durations, number of slices, model loading/file exporting durations
+    """
+    from sahi.utils.fiftyone import create_fiftyone_dataset_from_coco_file
+    import fiftyone as fo
+
+    # assert prediction type
+    assert (
+        no_standard_prediction and no_sliced_prediction
+    ) is not True, "'no_standard_pred' and 'no_sliced_prediction' cannot be True at the same time."
+
+    # for profiling
+    durations_in_seconds = dict()
+
+    dataset = create_fiftyone_dataset_from_coco_file(coco_image_dir, coco_json_path)
+
+    # init model instance
+    time_start = time.time()
+    model_class_name = MODEL_TYPE_TO_MODEL_CLASS_NAME[model_type]
+    DetectionModel = import_class(model_class_name)
+    detection_model = DetectionModel(
+        model_path=model_path,
+        config_path=model_config_path,
+        confidence_threshold=model_confidence_threshold,
+        device=model_device,
+        category_mapping=model_category_mapping,
+        category_remapping=model_category_remapping,
+        load_at_init=False,
+    )
+    detection_model.load_model()
+    time_end = time.time() - time_start
+    durations_in_seconds["model_load"] = time_end
+
+    # iterate over source images
+    durations_in_seconds["prediction"] = 0
+    durations_in_seconds["slice"] = 0
+    # Add predictions to samples
+    with fo.ProgressBar() as pb:
+        for sample in pb(dataset):
+            # perform prediction
+            if not no_sliced_prediction:
+                # get sliced prediction
+                prediction_result = get_sliced_prediction(
+                    image=sample.filepath,
+                    detection_model=detection_model,
+                    slice_height=slice_height,
+                    slice_width=slice_width,
+                    overlap_height_ratio=overlap_height_ratio,
+                    overlap_width_ratio=overlap_width_ratio,
+                    perform_standard_pred=not no_standard_prediction,
+                    postprocess_type=postprocess_type,
+                    postprocess_match_metric=postprocess_match_metric,
+                    postprocess_match_threshold=postprocess_match_threshold,
+                    postprocess_class_agnostic=postprocess_class_agnostic,
+                    verbose=verbose,
+                )
+                durations_in_seconds["slice"] += prediction_result.durations_in_seconds["slice"]
+            else:
+                # get standard prediction
+                prediction_result = get_prediction(
+                    image=sample.filepath,
+                    detection_model=detection_model,
+                    shift_amount=[0, 0],
+                    full_shape=None,
+                    postprocess=None,
+                    verbose=0,
+                )
+                durations_in_seconds["prediction"] += prediction_result.durations_in_seconds["prediction"]
+
+            # Save predictions to dataset
+            sample[model_type] = fo.Detections(detections=prediction_result.to_fiftyone_detections())
+            sample.save()
+
+    # print prediction duration
+    if verbose == 1:
+        print(
+            "Model loaded in",
+            durations_in_seconds["model_load"],
+            "seconds.",
+        )
+        print(
+            "Slicing performed in",
+            durations_in_seconds["slice"],
+            "seconds.",
+        )
+        print(
+            "Prediction performed in",
+            durations_in_seconds["prediction"],
+            "seconds.",
+        )
+
+    # visualize results
+    session = fo.launch_app()
+    session.dataset = dataset
+    # Evaluate the predictions
+    results = dataset.evaluate_detections(
+        model_type,
+        gt_field="ground_truth",
+        eval_key="eval",
+        iou=postprocess_match_threshold,
+        compute_mAP=True,
+    )
+    # Get the 10 most common classes in the dataset
+    counts = dataset.count_values("ground_truth.detections.label")
+    classes_top10 = sorted(counts, key=counts.get, reverse=True)[:10]
+    # Print a classification report for the top-10 classes
+    results.print_report(classes=classes_top10)
+    # Load the view on which we ran the `eval` evaluation
+    eval_view = dataset.load_evaluation_view("eval")
+    # Show samples with most false positives
+    session.view = eval_view.sort_by("eval_fp", reverse=True)
+    while 1:
+        time.sleep(3)
