@@ -13,16 +13,16 @@ class DetectionModel:
         self,
         model_path: str,
         config_path: Optional[str] = None,
+        names_path: Optional[str] = None,
         device: Optional[str] = None,
         mask_threshold: float = 0.5,
-        prediction_score_threshold: float = 0.3,
+        confidence_threshold: float = 0.3,
         category_mapping: Optional[Dict] = None,
         category_remapping: Optional[Dict] = None,
         load_at_init: bool = True,
     ):
         """
         Init object detection/instance segmentation model.
-
         Args:
             model_path: str
                 Path for the instance segmentation model weight
@@ -32,8 +32,8 @@ class DetectionModel:
                 Torch device, "cpu" or "cuda"
             mask_threshold: float
                 Value to threshold mask pixels, should be between 0 and 1
-            prediction_score_threshold: float
-                All predictions with score < prediction_score_threshold will be discarded
+            confidence_threshold: float
+                All predictions with score < confidence_threshold will be discarded
             category_mapping: dict: str to str
                 Mapping from category id (str) to category name (str) e.g. {"1": "pedestrian"}
             category_remapping: dict: str to int
@@ -41,16 +41,17 @@ class DetectionModel:
             load_at_init: bool
                 If True, automatically loads the model at initalization
         """
-        self.model_path = model_path
-        self.config_path = config_path
-        self.model = None
-        self.device = device
-        self.mask_threshold = mask_threshold
-        self.prediction_score_threshold = prediction_score_threshold
-        self.category_mapping = category_mapping
-        self.category_remapping = category_remapping
-        self._original_predictions = None
-        self._object_prediction_list = None
+        self.model_path =               model_path
+        self.config_path =              config_path
+        self.names_path =               names_path
+        self.model =                    None
+        self.device =                   device
+        self.mask_threshold =           mask_threshold
+        self.confidence_threshold =     confidence_threshold
+        self.category_mapping =         category_mapping
+        self.category_remapping =       category_remapping
+        self._original_predictions =    None
+        self._object_prediction_list =  None
 
         # automatically set device if its None
         if not (self.device):
@@ -75,14 +76,15 @@ class DetectionModel:
         self.model = None
         empty_cuda_cache()
 
-    def perform_inference(self, image: np.ndarray):
+    def perform_inference(self, image: np.ndarray, image_size: int = None):
         """
         This function should be implemented in a way that prediction should be
         performed using self.model and the prediction result should be set to self._original_predictions.
-
         Args:
             image: np.ndarray
                 A numpy array that contains the image to be predicted.
+            image_size: int
+                Inference input size.
         """
         NotImplementedError()
 
@@ -95,7 +97,6 @@ class DetectionModel:
         This function should be implemented in a way that self._original_predictions should
         be converted to a list of prediction.ObjectPrediction and set to
         self._object_prediction_list. self.mask_threshold can also be utilized.
-
         Args:
             shift_amount: list
                 To shift the box and mask predictions from sliced image to full sized image, should be in the form of [shift_x, shift_y]
@@ -124,7 +125,6 @@ class DetectionModel:
         """
         Converts original predictions of the detection model to a list of
         prediction.ObjectPrediction object. Should be called after perform_inference().
-
         Args:
             shift_amount: list
                 To shift the box and mask predictions from sliced image to full sized image, should be in the form of [shift_x, shift_y]
@@ -189,13 +189,14 @@ class MmdetDetectionModel(DetectionModel):
             category_mapping = {str(ind): category_name for ind, category_name in enumerate(self.category_names)}
             self.category_mapping = category_mapping
 
-    def perform_inference(self, image: np.ndarray):
+    def perform_inference(self, image: np.ndarray, image_size: int = None):
         """
         Prediction is performed using self.model and the prediction result is set to self._original_predictions.
-
         Args:
             image: np.ndarray
                 A numpy array that contains the image to be predicted.
+            image_size: int
+                Inference input size.
         """
         try:
             import mmdet
@@ -210,6 +211,10 @@ class MmdetDetectionModel(DetectionModel):
         # Supports only batch of 1
         from mmdet.apis import inference_detector
 
+        # update model image size
+        if image_size is not None:
+            self.model.cfg.data.test.pipeline[1]["img_scale"] = (image_size,)
+        # perform inference
         prediction_result = inference_detector(self.model, image)
 
         self._original_predictions = prediction_result
@@ -249,7 +254,6 @@ class MmdetDetectionModel(DetectionModel):
         """
         self._original_predictions is converted to a list of prediction.ObjectPrediction and set to
         self._object_prediction_list.
-
         Args:
             shift_amount: list
                 To shift the box and mask predictions from sliced image to full sized image, should be in the form of [shift_x, shift_y]
@@ -306,7 +310,6 @@ class MmdetDetectionModel(DetectionModel):
         Converts a list of prediction.ObjectPrediction instance to detection model's original prediction format.
         Then returns the converted predictions.
         Can be considered as inverse of _create_object_prediction_list_from_predictions().
-
         Args:
             object_prediction_list: a list of prediction.ObjectPrediction
         Returns:
@@ -373,13 +376,14 @@ class Yolov5DetectionModel(DetectionModel):
             category_mapping = {str(ind): category_name for ind, category_name in enumerate(self.category_names)}
             self.category_mapping = category_mapping
 
-    def perform_inference(self, image: np.ndarray):
+    def perform_inference(self, image: np.ndarray, image_size: int = None):
         """
         Prediction is performed using self.model and the prediction result is set to self._original_predictions.
-
         Args:
             image: np.ndarray
                 A numpy array that contains the image to be predicted.
+            image_size: int
+                Inference input size.
         """
         try:
             import yolov5
@@ -389,7 +393,10 @@ class Yolov5DetectionModel(DetectionModel):
         # Confirm model is loaded
         assert self.model is not None, "Model is not loaded, load it by calling .load_model()"
 
-        prediction_result = self.model(image)
+        if image_size:
+            prediction_result = self.model(image, size=image_size)
+        else:
+            prediction_result = self.model(image)
 
         self._original_predictions = prediction_result
 
@@ -420,7 +427,6 @@ class Yolov5DetectionModel(DetectionModel):
         """
         self._original_predictions is converted to a list of prediction.ObjectPrediction and set to
         self._object_prediction_list.
-
         Args:
             shift_amount: list
                 To shift the box and mask predictions from sliced image to full sized image, should be in the form of [shift_x, shift_y]
@@ -466,11 +472,148 @@ class Yolov5DetectionModel(DetectionModel):
         Converts a list of prediction.ObjectPrediction instance to detection model's original
         prediction format. Then returns the converted predictions.
         Can be considered as inverse of _create_object_prediction_list_from_predictions().
-
         Args:
             object_prediction_list: a list of prediction.ObjectPrediction
         Returns:
             original_predictions: a list of converted predictions in models original output format
+        """
+        assert self.original_predictions is not None, (
+            "self.original_predictions" " cannot be empty, call .perform_inference() first"
+        )
+        # TODO: implement object_prediction_list to yolov5 format conversion
+        NotImplementedError()
+
+
+class Yolov4DetectionModel(DetectionModel):
+    def load_model(self):
+        """
+        Detection model is initialized and set to self.model.
+        """
+        try:
+            from yolov4.tf import YOLOv4
+        except ImportError:
+            raise ImportError('Please run "pip install -U yolov4" ' "to install YOLOv4 first for YOLOv4 inference.")
+
+        # set model
+        try:
+            model = YOLOv4() 
+            model.config.parse_names(self.names_path)
+            print("1111111111")
+            model.config.parse_cfg(cfg_path = self.config_path)
+            print("222222222222")
+            model.make_model()
+            print("3333333333333333")
+            model.load_weights(self.model_path, weights_type="yolo")
+            print("4444444444444444")
+            self.model = model
+        except Exception as e:
+            TypeError("model_path is not a valid yolov4 model path: ", e)
+
+        # set category_mapping
+        if not self.category_mapping:
+            category_mapping = {str(ind): category_name for ind, category_name in enumerate(self.category_names)}
+            self.category_mapping = category_mapping
+
+    def perform_inference(self, image: np.ndarray , image_size: int = None):
+        """
+        Prediction is performed using self.model and the prediction result is set to self._original_predictions.
+        Args:
+            image: np.ndarray
+                A numpy array that contains the image to be predicted.
+        """
+
+        # Confirm model is loaded
+        assert self.model is not None, "Model is not loaded, load it by calling .load_model()"
+
+        # prediction_result = self.model(image)
+        if image_size:
+            prediction_result = self.model.predict(image, self.confidence_threshold)
+            print(prediction_result)
+        else:
+            prediction_result = self.model.predict(image, self.confidence_threshold)
+            print(prediction_result)
+
+        self._original_predictions = prediction_result
+        #prediction_result = self.model.predict(image, self.prediction_score_threshold)
+        self.image_height = image.shape[0]
+        self.image_width = image.shape[1]
+
+        self._original_predictions = prediction_result
+
+    @property
+    def num_categories(self):
+        """
+        Returns number of categories
+        """
+        return len(self.model.config.names)
+
+    @property
+    def category_names(self):
+        return list(self.model.config.names.values())
+
+    def _create_object_prediction_list_from_original_predictions(
+        self,
+        shift_amount: Optional[List[int]] = [0, 0],
+        full_shape: Optional[List[int]] = None,
+    ):
+        """
+        self._original_predictions is converted to a list of prediction.ObjectPrediction and set to
+        self._object_prediction_list.
+        Args:
+            shift_amount: list
+                To shift the box and mask predictions from sliced image to full sized image, should be in the form of [shift_x, shift_y]
+            full_shape: list
+                Size of the full image after shifting, should be in the form of [height, width]
+        """
+        original_predictions = self._original_predictions
+
+        # handle only first image (batch=1)
+        image_height = self.image_height
+        image_width = self.image_width
+
+        object_prediction_list = []
+
+        # process predictions
+        for prediction in original_predictions:
+            center_x = prediction[0]
+            center_y = prediction[1]
+            half_width = prediction[2] / 2
+            half_height = prediction[3] / 2
+            xmin = (center_x - half_width) * image_width
+            ymin = (center_y - half_height) * image_height
+            xmax = (center_x + half_width) * image_width
+            ymax = (center_y + half_height) * image_height
+            bbox = [xmin, ymin, xmax, ymax]
+
+            score = prediction[5].item()
+            category_id = int(prediction[4].item())
+            category_name = self.category_names[category_id]
+
+            object_prediction = ObjectPrediction(
+                bbox=bbox,
+                category_id=category_id,
+                score=score,
+                bool_mask=None,
+                category_name=category_name,
+                shift_amount=shift_amount,
+                full_shape=full_shape,
+            )
+            object_prediction_list.append(object_prediction)
+
+        self._object_prediction_list = object_prediction_list
+
+    def _create_original_predictions_from_object_prediction_list(
+        self,
+        object_prediction_list: List[ObjectPrediction],
+    ):
+        """
+        Converts a list of prediction.ObjectPrediction instance to detection model's original
+        prediction format. Then returns the converted predictions.
+        Can be considered as inverse of _create_object_prediction_list_from_predictions().
+        Args:
+        object_prediction_list: a list of prediction.ObjectPrediction
+        Returns:
+        original_predictions: a list of converted predictions in models original output format
         """
         assert self.original_predictions is not None, (
             "self.original_predictions" " cannot be empty, call .perform_inference() first"
