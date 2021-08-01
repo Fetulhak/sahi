@@ -1,11 +1,12 @@
 # OBSS SAHI Tool
 # Code written by Fatih C Akyon, 2020.
 
+from typing import Dict, List, Optional, Union
+
 import numpy as np
 
 from sahi.prediction import ObjectPrediction
 from sahi.utils.torch import cuda_is_available, empty_cuda_cache
-from typing import List, Dict, Optional, Union
 
 
 class DetectionModel:
@@ -23,6 +24,7 @@ class DetectionModel:
     ):
         """
         Init object detection/instance segmentation model.
+
         Args:
             model_path: str
                 Path for the instance segmentation model weight
@@ -41,17 +43,17 @@ class DetectionModel:
             load_at_init: bool
                 If True, automatically loads the model at initalization
         """
-        self.model_path =               model_path
-        self.config_path =              config_path
-        self.names_path =               names_path
-        self.model =                    None
-        self.device =                   device
-        self.mask_threshold =           mask_threshold
-        self.confidence_threshold =     confidence_threshold
-        self.category_mapping =         category_mapping
-        self.category_remapping =       category_remapping
-        self._original_predictions =    None
-        self._object_prediction_list =  None
+        self.model_path = model_path
+        self.config_path = config_path
+        self.names_path=names_path
+        self.model = None
+        self.device = device
+        self.mask_threshold = mask_threshold
+        self.confidence_threshold = confidence_threshold
+        self.category_mapping = category_mapping
+        self.category_remapping = category_remapping
+        self._original_predictions = None
+        self._object_prediction_list = None
 
         # automatically set device if its None
         if not (self.device):
@@ -80,6 +82,7 @@ class DetectionModel:
         """
         This function should be implemented in a way that prediction should be
         performed using self.model and the prediction result should be set to self._original_predictions.
+
         Args:
             image: np.ndarray
                 A numpy array that contains the image to be predicted.
@@ -97,6 +100,7 @@ class DetectionModel:
         This function should be implemented in a way that self._original_predictions should
         be converted to a list of prediction.ObjectPrediction and set to
         self._object_prediction_list. self.mask_threshold can also be utilized.
+
         Args:
             shift_amount: list
                 To shift the box and mask predictions from sliced image to full sized image, should be in the form of [shift_x, shift_y]
@@ -125,6 +129,7 @@ class DetectionModel:
         """
         Converts original predictions of the detection model to a list of
         prediction.ObjectPrediction object. Should be called after perform_inference().
+
         Args:
             shift_amount: list
                 To shift the box and mask predictions from sliced image to full sized image, should be in the form of [shift_x, shift_y]
@@ -192,6 +197,7 @@ class MmdetDetectionModel(DetectionModel):
     def perform_inference(self, image: np.ndarray, image_size: int = None):
         """
         Prediction is performed using self.model and the prediction result is set to self._original_predictions.
+
         Args:
             image: np.ndarray
                 A numpy array that contains the image to be predicted.
@@ -254,6 +260,7 @@ class MmdetDetectionModel(DetectionModel):
         """
         self._original_predictions is converted to a list of prediction.ObjectPrediction and set to
         self._object_prediction_list.
+
         Args:
             shift_amount: list
                 To shift the box and mask predictions from sliced image to full sized image, should be in the form of [shift_x, shift_y]
@@ -310,6 +317,7 @@ class MmdetDetectionModel(DetectionModel):
         Converts a list of prediction.ObjectPrediction instance to detection model's original prediction format.
         Then returns the converted predictions.
         Can be considered as inverse of _create_object_prediction_list_from_predictions().
+
         Args:
             object_prediction_list: a list of prediction.ObjectPrediction
         Returns:
@@ -379,6 +387,7 @@ class Yolov5DetectionModel(DetectionModel):
     def perform_inference(self, image: np.ndarray, image_size: int = None):
         """
         Prediction is performed using self.model and the prediction result is set to self._original_predictions.
+
         Args:
             image: np.ndarray
                 A numpy array that contains the image to be predicted.
@@ -427,6 +436,7 @@ class Yolov5DetectionModel(DetectionModel):
         """
         self._original_predictions is converted to a list of prediction.ObjectPrediction and set to
         self._object_prediction_list.
+
         Args:
             shift_amount: list
                 To shift the box and mask predictions from sliced image to full sized image, should be in the form of [shift_x, shift_y]
@@ -472,6 +482,7 @@ class Yolov5DetectionModel(DetectionModel):
         Converts a list of prediction.ObjectPrediction instance to detection model's original
         prediction format. Then returns the converted predictions.
         Can be considered as inverse of _create_object_prediction_list_from_predictions().
+
         Args:
             object_prediction_list: a list of prediction.ObjectPrediction
         Returns:
@@ -482,7 +493,6 @@ class Yolov5DetectionModel(DetectionModel):
         )
         # TODO: implement object_prediction_list to yolov5 format conversion
         NotImplementedError()
-
 
 class Yolov4DetectionModel(DetectionModel):
     def load_model(self):
