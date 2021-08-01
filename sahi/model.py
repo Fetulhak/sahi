@@ -508,13 +508,9 @@ class Yolov4DetectionModel(DetectionModel):
         try:
             model = YOLOv4() 
             model.config.parse_names(self.names_path)
-            print("1111111111")
             model.config.parse_cfg(cfg_path = self.config_path)
-            print("222222222222")
             model.make_model()
-            print("3333333333333333")
             model.load_weights(self.model_path, weights_type="yolo")
-            print("4444444444444444")
             self.model = model
         except Exception as e:
             TypeError("model_path is not a valid yolov4 model path: ", e)
