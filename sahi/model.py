@@ -24,7 +24,6 @@ class DetectionModel:
     ):
         """
         Init object detection/instance segmentation model.
-
         Args:
             model_path: str
                 Path for the instance segmentation model weight
@@ -82,7 +81,6 @@ class DetectionModel:
         """
         This function should be implemented in a way that prediction should be
         performed using self.model and the prediction result should be set to self._original_predictions.
-
         Args:
             image: np.ndarray
                 A numpy array that contains the image to be predicted.
@@ -100,7 +98,6 @@ class DetectionModel:
         This function should be implemented in a way that self._original_predictions should
         be converted to a list of prediction.ObjectPrediction and set to
         self._object_prediction_list. self.mask_threshold can also be utilized.
-
         Args:
             shift_amount: list
                 To shift the box and mask predictions from sliced image to full sized image, should be in the form of [shift_x, shift_y]
@@ -129,7 +126,6 @@ class DetectionModel:
         """
         Converts original predictions of the detection model to a list of
         prediction.ObjectPrediction object. Should be called after perform_inference().
-
         Args:
             shift_amount: list
                 To shift the box and mask predictions from sliced image to full sized image, should be in the form of [shift_x, shift_y]
@@ -197,7 +193,6 @@ class MmdetDetectionModel(DetectionModel):
     def perform_inference(self, image: np.ndarray, image_size: int = None):
         """
         Prediction is performed using self.model and the prediction result is set to self._original_predictions.
-
         Args:
             image: np.ndarray
                 A numpy array that contains the image to be predicted.
@@ -260,7 +255,6 @@ class MmdetDetectionModel(DetectionModel):
         """
         self._original_predictions is converted to a list of prediction.ObjectPrediction and set to
         self._object_prediction_list.
-
         Args:
             shift_amount: list
                 To shift the box and mask predictions from sliced image to full sized image, should be in the form of [shift_x, shift_y]
@@ -317,7 +311,6 @@ class MmdetDetectionModel(DetectionModel):
         Converts a list of prediction.ObjectPrediction instance to detection model's original prediction format.
         Then returns the converted predictions.
         Can be considered as inverse of _create_object_prediction_list_from_predictions().
-
         Args:
             object_prediction_list: a list of prediction.ObjectPrediction
         Returns:
@@ -387,7 +380,6 @@ class Yolov5DetectionModel(DetectionModel):
     def perform_inference(self, image: np.ndarray, image_size: int = None):
         """
         Prediction is performed using self.model and the prediction result is set to self._original_predictions.
-
         Args:
             image: np.ndarray
                 A numpy array that contains the image to be predicted.
@@ -436,7 +428,6 @@ class Yolov5DetectionModel(DetectionModel):
         """
         self._original_predictions is converted to a list of prediction.ObjectPrediction and set to
         self._object_prediction_list.
-
         Args:
             shift_amount: list
                 To shift the box and mask predictions from sliced image to full sized image, should be in the form of [shift_x, shift_y]
@@ -482,7 +473,6 @@ class Yolov5DetectionModel(DetectionModel):
         Converts a list of prediction.ObjectPrediction instance to detection model's original
         prediction format. Then returns the converted predictions.
         Can be considered as inverse of _create_object_prediction_list_from_predictions().
-
         Args:
             object_prediction_list: a list of prediction.ObjectPrediction
         Returns:
@@ -534,10 +524,10 @@ class Yolov4DetectionModel(DetectionModel):
         # prediction_result = self.model(image)
         if image_size:
             prediction_result = self.model.predict(image, self.confidence_threshold)
-            print(prediction_result)
+            #print(prediction_result)
         else:
             prediction_result = self.model.predict(image, self.confidence_threshold)
-            print(prediction_result)
+            #print(prediction_result)
 
         self._original_predictions = prediction_result
         #prediction_result = self.model.predict(image, self.prediction_score_threshold)
@@ -572,6 +562,8 @@ class Yolov4DetectionModel(DetectionModel):
                 Size of the full image after shifting, should be in the form of [height, width]
         """
         original_predictions = self._original_predictions
+        #print("dude this is my original predictions")
+        #print(original_predictions)
 
         # handle only first image (batch=1)
         image_height = self.image_height
@@ -589,8 +581,12 @@ class Yolov4DetectionModel(DetectionModel):
             ymin = (center_y - half_height) * image_height
             xmax = (center_x + half_width) * image_width
             ymax = (center_y + half_height) * image_height
+            if xmin < 0 or ymin < 0 or xmax < 0 or ymax < 0:
+              continue
             bbox = [xmin, ymin, xmax, ymax]
 
+            print("dude this is my bbox")
+            print(bbox)
             score = prediction[5].item()
             category_id = int(prediction[4].item())
             category_name = self.category_names[category_id]
