@@ -3,32 +3,22 @@
 
 import os
 import time
-from typing import Dict, Optional, List
+from typing import Dict, List, Optional
 
 import numpy as np
 from tqdm import tqdm
 
+from sahi.postprocess.combine import NMSPostprocess, PostprocessPredictions, UnionMergePostprocess
 from sahi.prediction import ObjectPrediction, PredictionResult
-from sahi.postprocess.combine import UnionMergePostprocess, PostprocessPredictions, NMSPostprocess
 from sahi.slicing import slice_image
 from sahi.utils.coco import Coco, CocoImage
-from sahi.utils.cv import (
-    crop_object_predictions,
-    read_image_as_pil,
-    visualize_object_predictions,
-)
-from sahi.utils.file import (
-    Path,
-    import_class,
-    increment_path,
-    list_files,
-    save_json,
-    save_pickle,
-)
+from sahi.utils.cv import crop_object_predictions, read_image_as_pil, visualize_object_predictions
+from sahi.utils.file import Path, import_class, increment_path, list_files, save_json, save_pickle
 
 MODEL_TYPE_TO_MODEL_CLASS_NAME = {
     "mmdet": "MmdetDetectionModel",
     "yolov5": "Yolov5DetectionModel",
+    "yolov4" : "Yolov4DetectionModel",
 }
 
 
@@ -43,6 +33,7 @@ def get_prediction(
 ) -> PredictionResult:
     """
     Function for performing prediction for given image using given detection_model.
+
     Arguments:
         image: str or np.ndarray
             Location of image or numpy image matrix to slice
@@ -58,6 +49,7 @@ def get_prediction(
         verbose: int
             0: no print (default)
             1: print prediction duration
+
     Returns:
         A dict with fields:
             object_prediction_list: a list of ObjectPrediction
@@ -119,7 +111,7 @@ def get_sliced_prediction(
     slice_width: int = 256,
     overlap_height_ratio: float = 0.2,
     overlap_width_ratio: float = 0.2,
-    perform_standard_pred: bool = True,
+    perform_standard_pred: bool = False,
     postprocess_type: str = "UNIONMERGE",
     postprocess_match_metric: str = "IOS",
     postprocess_match_threshold: float = 0.5,
@@ -128,6 +120,7 @@ def get_sliced_prediction(
 ) -> PredictionResult:
     """
     Function for slice image + get predicion for each slice + combine predictions in full image.
+
     Args:
         image: str or np.ndarray
             Location of image or numpy image matrix to slice
@@ -164,6 +157,7 @@ def get_sliced_prediction(
             0: no print
             1: print number of slices (default)
             2: print number of slices and slice/prediction durations
+
     Returns:
         A Dict with fields:
             object_prediction_list: a list of sahi.prediction.ObjectPrediction
@@ -276,6 +270,7 @@ def predict(
     model_type: str = "mmdet",
     model_path: str = None,
     model_config_path: str = None,
+    model_names_path: str = None,
     model_confidence_threshold: float = 0.25,
     model_device: str = None,
     model_category_mapping: dict = None,
@@ -283,6 +278,7 @@ def predict(
     source: str = None,
     no_standard_prediction: bool = False,
     no_sliced_prediction: bool = False,
+    image_size: int = None,
     slice_height: int = 256,
     slice_width: int = 256,
     overlap_height_ratio: float = 0.2,
@@ -305,6 +301,7 @@ def predict(
 ):
     """
     Performs prediction for all present images in given folder.
+
     Args:
         model_type: str
             mmdet for 'MmdetDetectionModel', 'yolov5' for 'Yolov5DetectionModel'.
@@ -326,6 +323,8 @@ def predict(
             Dont perform standard prediction. Default: False.
         no_sliced_prediction: bool
             Dont perform sliced prediction. Default: False.
+        image_size: int
+            Input image size for each inference (image is scaled by preserving asp. rat.).
         slice_height: int
             Height of each slice.  Defaults to ``256``.
         slice_width: int
@@ -409,6 +408,7 @@ def predict(
     detection_model = DetectionModel(
         model_path=model_path,
         config_path=model_config_path,
+        names_path = model_names_path,
         confidence_threshold=model_confidence_threshold,
         device=model_device,
         category_mapping=model_category_mapping,
@@ -439,6 +439,7 @@ def predict(
             prediction_result = get_sliced_prediction(
                 image=image_path,
                 detection_model=detection_model,
+                image_size=image_size,
                 slice_height=slice_height,
                 slice_width=slice_width,
                 overlap_height_ratio=overlap_height_ratio,
@@ -457,6 +458,7 @@ def predict(
             prediction_result = get_prediction(
                 image=image_path,
                 detection_model=detection_model,
+                image_size=image_size,
                 shift_amount=[0, 0],
                 full_shape=None,
                 postprocess=None,
@@ -586,6 +588,7 @@ def predict_fiftyone(
     coco_image_dir: str = None,
     no_standard_prediction: bool = False,
     no_sliced_prediction: bool = False,
+    image_size: int = None,
     slice_height: int = 256,
     slice_width: int = 256,
     overlap_height_ratio: float = 0.2,
@@ -598,6 +601,7 @@ def predict_fiftyone(
 ):
     """
     Performs prediction for all present images in given folder.
+
     Args:
         model_type: str
             mmdet for 'MmdetDetectionModel', 'yolov5' for 'Yolov5DetectionModel'.
@@ -621,6 +625,8 @@ def predict_fiftyone(
             Dont perform standard prediction. Default: False.
         no_sliced_prediction: bool
             Dont perform sliced prediction. Default: False.
+        image_size: int
+            Input image size for each inference (image is scaled by preserving asp. rat.).
         slice_height: int
             Height of each slice.  Defaults to ``256``.
         slice_width: int
@@ -648,8 +654,9 @@ def predict_fiftyone(
             0: no print
             1: print slice/prediction durations, number of slices, model loading/file exporting durations
     """
-    from sahi.utils.fiftyone import create_fiftyone_dataset_from_coco_file
     import fiftyone as fo
+
+    from sahi.utils.fiftyone import create_fiftyone_dataset_from_coco_file
 
     # assert prediction type
     assert (
@@ -690,6 +697,7 @@ def predict_fiftyone(
                 prediction_result = get_sliced_prediction(
                     image=sample.filepath,
                     detection_model=detection_model,
+                    image_size=image_size,
                     slice_height=slice_height,
                     slice_width=slice_width,
                     overlap_height_ratio=overlap_height_ratio,
@@ -707,6 +715,7 @@ def predict_fiftyone(
                 prediction_result = get_prediction(
                     image=sample.filepath,
                     detection_model=detection_model,
+                    image_size=image_size,
                     shift_amount=[0, 0],
                     full_shape=None,
                     postprocess=None,
