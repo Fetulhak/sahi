@@ -444,7 +444,7 @@ def predict(
                 slice_width=slice_width,
                 overlap_height_ratio=overlap_height_ratio,
                 overlap_width_ratio=overlap_width_ratio,
-                perform_standard_pred=not no_standard_prediction,
+                perform_standard_pred= no_standard_prediction,
                 postprocess_type=postprocess_type,
                 postprocess_match_metric=postprocess_match_metric,
                 postprocess_match_threshold=postprocess_match_threshold,
