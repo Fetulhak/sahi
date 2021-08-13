@@ -585,8 +585,6 @@ class Yolov4DetectionModel(DetectionModel):
               continue
             bbox = [xmin, ymin, xmax, ymax]
 
-            print("dude this is my bbox")
-            print(bbox)
             score = prediction[5].item()
             category_id = int(prediction[4].item())
             category_name = self.category_names[category_id]
